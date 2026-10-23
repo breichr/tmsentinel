@@ -64,6 +64,48 @@ Der Parser überspringt `#`-Zeilen und den `log show`-Footer
 auf stderr geloggt, gefolgt von einer Zusammenfassung
 (`n parsed / n unparsed records`) — nichts wird still verworfen.
 
+## Installation
+
+### Homebrew (Tap)
+
+```sh
+brew install breichr/tmsentinel
+```
+
+(Tap: `github.com/breichr/homebrew-tmsentinel`; Formel-Quelle liegt als
+Template in `contrib/homebrew/`.)
+
+### Direkt-Download
+
+Release-Archiv für `darwin-arm64` bzw. `darwin-amd64` von der
+[GitHub-Releases-Seite](https://github.com/breichr/tmsentinel/releases)
+entpacken, Binary nach `~/.local/bin` (o. ä.) legen und ausführbar machen.
+
+### Aus dem Source
+
+```sh
+go build -o ~/.local/bin/tmsentinel .
+```
+
+Nur Standardbibliothek, keine externen Abhängigkeiten; nur macOS
+(`statfs`-Erreichbarkeit und `log`/`tmutil` sind darwin-spezifisch).
+
+## Nutzungsbeispiele
+
+```sh
+# Für launchd/cron/healthchecks.io: nur der Exit-Code entscheidet
+tmsentinel check
+
+# Warum ist nichts frisch? Ziele ansehen
+tmsentinel destinations
+
+# Eigene Schwelle
+tmsentinel check --threshold 24
+
+# Rohdaten für Fehlerberichte und Test-Fixtures
+tmsentinel export report.ndjson
+```
+
 ## Phase 0 Ergebnisse
 
 Verifiziert am 2026-10-23 auf dem Ziel-Mac (macOS, arm64), ohne Full Disk
