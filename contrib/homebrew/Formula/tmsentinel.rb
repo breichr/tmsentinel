@@ -6,7 +6,7 @@
 class Tmsentinel < Formula
   desc "Stateless, FDA-free Time Machine monitoring CLI"
   homepage "https://github.com/breichr/tmsentinel"
-  license "TODO: set license (see repository decision)"
+  license "MIT"
   version "0.1.0"
 
   depends_on :macos
