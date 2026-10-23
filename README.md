@@ -19,9 +19,12 @@ go build -o tmsentinel .
 Der Prototyp führt als Subprozess aus (read-only):
 
 ```
-/usr/bin/log show --style ndjson --last 7d \
+/usr/bin/log show --style ndjson --info --last 7d \
   --predicate 'subsystem == "com.apple.TimeMachine"'
 ```
+
+(`--info` ist Pflicht: backupd loggt seine Lifecycle-Signale auf
+Info-Stufe, siehe „Phase 0 Ergebnisse".)
 
 Ausgabe: Zeitstempel und Alter des letzten erfolgreichen Backups, Anzahl
 erkannter Backups im 7-Tage-Fenster, Zustand des letzten Backups
@@ -82,40 +85,84 @@ Backup session status:
 }
 ```
 
-**`tmutil latestbackup` — erwarteter FDA-Fehler trat NICHT ein:**
+**`tmutil latestbackup` — FDA-Bindung bestätigt (mit gemountetem Ziel):**
 
 ```
-Failed to mount backup destination, error: Error Domain=com.apple.backupd.ErrorDomain Code=18 "Failed to mount destination." UserInfo={NSLocalizedDescription=Failed to mount destination.}
+tmutil: latestbackup requires Full Disk Access privileges.
+To allow this operation, select Full Disk Access in the Privacy
+tab of the Security and Privacy preference pane, and add Terminal
+to the list of applications which are allowed Full Disk Access.
 ```
 
-Befund: Der erwartete FDA-Fehler („Operation not permitted") erscheint in
-diesem Systemzustand nicht, weil `latestbackup` bereits am Mounten des
-Ziels scheitert — die FDA-geschützte Operation wird nie erreicht. Bemerkenswert:
-der Befehl endet trotz Fehler mit **exit 0**. Die FDA-Bindung ist damit auf
-diesem System **nicht belegt**; offene Frage, mit gemountetem Ziel neu zu
-verifizieren (siehe Gate-1-Bericht).
+(exit 80). Beim ersten Verifikationslauf (Ziel nicht gemountet) schlug
+der Befehl erwartungsgemäß **nicht** am FDA fehl, sondern vorher am
+Mounten des Ziels (`Code=18 "Failed to mount destination."`, bemerkenswerterweise
+exit 0) — die FDA-geschützte Operation wurde nie erreicht. Mit gemountetem
+Ziel tritt der FDA-Fehler exakt wie erwartet ein: **die FDA-Bindung ist
+damit belegt.** Auch ein schlichtes `ls /Volumes/TimeMachine/` scheitert
+ohne FDA mit „Operation not permitted" — das Ziel selbst bleibt FDA-geschützt,
+der Unified Log nicht.
 
 ### Prototyp-Lauf gegen die realen Daten (7 Tage)
 
+Zwei Läufe, zwei Systemzustände:
+
+**Lauf 1 — Ziel nicht erreichbar (14:29 Uhr):**
+
 ```
-$ ./tmsentinel --export corpus-2026-10-23.ndjson
 tmsentinel: 5572 parsed / 0 unparsed records (1 footer lines)
 Time Machine status (unified log, last 7d)
   last successful backup : none in window
   backups detected       : 0
-  last backup state      : no backup session detected (62 failure signals, last: 2026-10-23 14:06:12 CEST)
+  last backup state      : no backup session detected
   threshold              : 48.0 h
-  export                 : corpus-2026-10-23.ndjson
 result: no successful backup in window (exit 2)
 ```
 
-Gegenprobe Realität: `tmutil status` meldet `Running = 0`, das Ziel-Volume
-ist nicht gemountet, das NAS ist per Bonjour nicht erreichbar — es gibt
-also auch nach außerlogischer Quelle **keinen** aktuellen Backup. Die
-Meldung „kein erfolgreicher Backup im Fenster, 62 Fehlersignale" deckt
-sich mit der Realität. Ein Alter konnte nicht gegengeprüft werden, weil
-kein erfolgreicher Backup existiert; die Zustandsaussage ist konsistent
-über alle Quellen.
+Gegenprobe: `tmutil status` meldete `Running = 0`, das Ziel-Volume war
+nicht gemountet, das NAS per Bonjour nicht erreichbar — keine Quelle
+zeigte einen Backup. Konsistent.
+
+**Lauf 2 — nach anstecken der Backup-SSD, ein vollständiger Lauf (15:0x Uhr):**
+
+```
+tmsentinel: 13038 parsed / 0 unparsed records (1 footer lines)
+Time Machine status (unified log, last 7d)
+  last successful backup : 2026-10-23 14:37:01 CEST (0.3 h ago)
+  backups detected       : 1
+  last backup state      : success
+  threshold              : 48.0 h
+result: fresh (exit 0)
+```
+
+Gegenprobe Realität: Time Machine startete beim Anstecken automatisch
+(`tmutil status`: `Running = 1` ab 14:33:49, Phase PreparingSourceVolumes)
+und meldete danach `Running = 0`. Der Unified Log zeigt den vollständigen
+Lauf: Dispatch 14:33:47, „Backup succeeded — Elapsed time: About 4 minutes"
+14:37:01 — gemeldetes Alter (0,3 h) und Zeitstempel passen zur Realität.
+Der vorherige Backup auf dem Ziel datierte vom 14.10. (Referenz-Mount
+`2026-10-14-170330.backup`), das Fenster dazwischen war backupfrei, wie
+Lauf 1 meldete.
+
+### Wichtiger technischer Befund: Info-Stufe ist Pflicht
+
+Der erste Prototyp lief ohne `--info` und sah **kein einziges**
+Lifecycle-Ereignis. Ursache: `backupd` loggt sämtliche Lebenszyklus-Signale
+(`BackupDispatching`, `BackupDestination`, `TMSession`, …) auf **Info**-Stufe,
+die `log show` standardmäßig nicht zurückgibt. Die finale Abfrage lautet
+daher:
+
+```
+/usr/bin/log show --style ndjson --info --last 7d \
+  --predicate 'subsystem == "com.apple.TimeMachine"'
+```
+
+Zweiter Befund: `fs_snapshot_list failed: Operation not supported` ist
+**kein** Fehlersignal — es feuert während eines gesunden, erfolgreichen
+Backups (3× bei 14:33:51, Abschluss success) ebenso wie in der idle-Wartung
+(62× über die backupfreie Woche). Der Klassifikator behandelt es
+entsprechend als Rauschen; ebenso `Starting backup pass N` (innere
+Durchgänge eines laufenden Backups, Kategorie FileProtection).
 
 Nebenbefund: Der Unified-Log-Speicher dieses Systems reicht nur bis
 2026-10-19 13:24 zurück (eine 30-Tage-Abfrage liefert praktisch dieselben
@@ -127,67 +174,75 @@ Aufnahmen sind kurzlebig, `--export` regelmäßig ausführen.
 **Gate-1-Frage: Liefert der Unified Log zuverlässig Start und Abschluss
 jedes Backups ohne FDA?**
 
-Antwort: **Auf diesem System derzeit nicht belegbar — es gab im
-7-Tage-Fenster keinen einzigen Backuplauf**, also auch kein Start-/Abschluss-Paar
-zum Gegenüberstellen.
+Antwort: **Ja — belegt an einem realen, vollständigen Backuplauf am
+2026-10-23 auf diesem Mac, vollständig ohne FDA.** Start und Abschluss
+erscheinen beide in der Kategorie `BackupDispatching` des Subsystems
+`com.apple.TimeMachine` (Stufe Info) mit klaren, maschinenlesbaren
+Meldungen.
 
 Je Backup im 7-Tage-Fenster:
 
 | Backup | Start-Ereignis | Abschluss-Ereignis |
 | --- | --- | --- |
-| (keine Backups im Fenster — 0 Sitzungen erkannt) | – | – |
+| 2026-10-23, 14:33:47 → 14:37:01 (lokal, APFS-SSD) | ja — `BackupDispatching`: „Backup requested to next destination in rotation" | ja — `BackupDispatching`: „Backup succeeded — Elapsed time: About 4 minutes" |
 
-Was belegt ist:
+Vorherige Backups (zuletzt 14.10.) liegen außerhalb des Logfensters
+(Speicher retenziert nur ~4 Tage) und sind daher nicht prüfbar — keine
+Aussage über sie, weder positiv noch negativ.
 
-- `log show --style ndjson` auf Subsystem `com.apple.TimeMachine`
-  funktioniert **ohne FDA** aus der Kommandozeile: 5570 Datensätze in 7
-  Tagen lesbar, alle Felder öffentlich (kein `<private>` in dieser
-  Aufnahme).
-- Das **Fehlen** von Backups ist sauber beobachtbar: 62
-  `fs_snapshot_list failed`-Signale, 2033 „Failed to read capabilities"-
-  Meldungen (NAS-Volume), 1511 Bonjour-Auflösungsfehler — das Werkzeug
-  hätte also exakt das getan, wofür es gebaut ist: melden, dass das
-  Backup nicht läuft.
+Belegt außerdem:
 
-Was nicht belegt ist:
+- `log show --style ndjson --info` auf Subsystem `com.apple.TimeMachine`
+  funktioniert **ohne FDA** aus der Kommandozeile; im 7-Tage-Fenster
+  13.038 Datensätze lesbar, alle Felder öffentlich (kein `<private>`).
+- Das **Fehlen** von Backups ist ebenso beobachtbar: Lauf 1 meldete
+  korrekt „kein Backup im Fenster", während das Ziel nicht erreichbar war
+  — der Anwendungsfall des Werkzeugs, FDA-frei.
+- Die FDA-Grenze liegt exakt dort, wo das Projekt sie vermutet hat:
+  `tmutil latestbackup` (exit 80) und selbst `ls` auf dem Ziel scheitern
+  ohne FDA; der Unified Log nicht.
 
-- Ob Start- und Abschluss-Ereignisse eines **real erfolgreich
-  durchgelaufenen** Backups im Subsystem `com.apple.TimeMachine`
-  erscheinen und mit welchen exacten Meldetexten auf dieser macOS-Version.
-  Die Start-/Erfolgsmuster des Prototyps sind dokumentiert-klassisch
-  (siehe Tabelle unten), aber ohne reales Fixture auf diesem System.
+Offene Fragen (dokumentiert, nicht spekulativ im Code gelöst):
 
-Konsequenz und nächste Schritte (keine Spekulation im Code — ungeklärtes
-bleibt offene Frage):
+1. Verhält sich `BackupDispatching` auf **SMB-Netzwerkzielen** identisch?
+   Korpus-Aufnahme läuft; erst ein realer SMB-Lauf (Erfolg und Abbruch)
+   beantwortet das.
+2. Wie sieht das **Fehlschlag**-Abschluss-Ereignis dieser macOS-Version
+   aus (erwartet: Kategorie `BackupDispatching`, Meldung mit „failed")?
+   Klassifikation aktuell nur mit klassischen Mustern abgedeckt, auf
+   diesem System unverifiziert.
+3. Ein realer **hängender** Backup (Start ohne Abschluss) lag im Fenster
+   nicht vor; die Zustandsmaschine behandelt ihn (hung nach 6 h Gnadenfrist),
+   aber ohne Fixture bleibt er ungetestet gegen Realität.
 
-1. Die Bestätigung von Gate 1 erfordert mindestens einen real
-   durchgelaufenen Backup. Der Prototyp ist dafür fertig: `--export`
-   schneidet rohe Ausgaben mit, die Klassifikationsmuster werden dann
-   gegen den Korpus verifiziert.
-2. Die Muster für start/success sind bis dahin als **unverifiziert** zu
-   behandeln; der Korpuslauf der nächsten zwei Wochen (Roadmap Phase 0)
-   liefert die Evidenz.
-3. Offene Frage: FDA-Bindung von `tmutil latestbackup` mit gemountetem
-   Ziel klären (aktuell scheitert der Befehl vorher am Mount, exit 0).
+Gate 1: **bestanden** (lokal bewiesen; SMB-Variante als offene Randbedingung
+für die Korpus-Phase mitgenommen).
 
 ### Musterkatalog des Prototyps mit Verifizierungsstatus
 
 | Muster | Klassifikation | Status |
 | --- | --- | --- |
-| `Starting (automatic\|manual) backup`, `Starting backup`, eventType `BackupDispatching` | start | klassisch dokumentiert, auf diesem System **unverifiziert** |
+| Kategorie `BackupDispatching` + „Backup requested to next destination in rotation" | start | **belegt** (realer Lauf 2026-10-23) |
+| Kategorie `BackupDispatching` + „Backup succeeded" | success | **belegt** (realer Lauf 2026-10-23) |
+| `Starting backup pass N` (FileProtection) | none (innerer Durchgang) | **belegt** — bewusst kein Sitzungs-Start |
+| `fs_snapshot_list failed` | none (Rauschen) | **belegt** — feuert auch in gesunden Läufen |
+| `Failed to read capabilities`, `Bonjour resolution not possible`, XPC-Rauschen | none (Rauschen) | **belegt** |
+| `Starting (automatic\|manual) backup` | start | klassisch dokumentiert, auf diesem System **unverifiziert** |
 | `Completed backup`, `Backup completed`, `Backup finished` | success | klassisch dokumentiert, auf diesem System **unverifiziert** |
-| `fs_snapshot_list failed` | failed | **belegt** (62× im Korpus-Sample) |
-| `Failed to mount (backup )?destination` | failed | plausibel, im Korpus nur außerhalb (tmutil) beobachtet |
-| `Backup failed`, `failed to complete backup`, `Backup aborted` | failed | klassisch dokumentiert, **unverifiziert** |
-| `Failed to read capabilities`, `Bonjour resolution not possible`, XPC-Rauschen | none (Rauschen) | **belegt** (bewusst nicht als Fehlersignal klassifiziert) |
+| `Backup failed`, `failed to complete backup`, `Backup aborted`, `Failed to mount (backup )?destination` | failed | klassisch dokumentiert, auf diesem System **unverifiziert** |
 
 ### Korpus-Start
 
-`testdata/phase0-2026-10-23-anonymized.ndjson` enthält den anonymisierten
-Real-Export (5570 Datensätze, 0 Backups, 62 Snapshot-Fehler) als
-Golden-File-Test. Weiterführung: regelmäßig `--export` ausführen, bis der
-Korpus mindestens einen vollständigen Backuplauf (start → success) und
-einen SMB-Fehler enthält (Roadmap).
+Zwei anonymisierte Real-Exporte als Golden-File-Tests:
+
+- `testdata/phase0-2026-10-23-anonymized.ndjson` — backupfreies Fenster
+  (Default-Stufe, 5570 Datensätze): Zustand „kein Backup", Exit 2.
+- `testdata/phase0-2026-10-23-run.ndjson` — vollständiger realer Lauf
+  (Info-Stufe, 292 Datensätze): genau eine Sitzung, Start 14:33:47,
+  Erfolg 14:37:01, Exit 0 — die Gate-1-Evidenz.
+
+Weiterführung: regelmäßig `--export` ausführen, bis der Korpus auch einen
+SMB-Lauf (Erfolg und Abbruch) und einen hängenden Backup enthält (Roadmap).
 
 ## Definition of done (Phase 0)
 

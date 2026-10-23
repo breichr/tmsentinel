@@ -4,10 +4,11 @@
 //
 // Phase 0 scope: prove the FDA-free core. It runs
 //
-//	log show --style ndjson --last 7d \
+//	log show --style ndjson --info --last 7d \
 //	  --predicate 'subsystem == "com.apple.TimeMachine"'
 //
-// as a subprocess, pairs backup start and completion events
+// as a subprocess (the --info level is required: backupd logs its
+// lifecycle signals — BackupDispatching etc. — at Info, not Default), pairs backup start and completion events
 // (idle -> running -> success/failed), and reports the timestamp and age
 // of the last successful backup. Nothing is persisted; every run derives
 // state fresh from the event stream.
@@ -96,36 +97,57 @@ type logRecord struct {
 	Timestamp        *string `json:"timestamp"`
 	EventMessage     *string `json:"eventMessage"`
 	EventType        *string `json:"eventType"`
+	Category         *string `json:"category"`
 	ProcessImagePath *string `json:"processImagePath"`
 	// Finished is set on the ndjson footer line ({"count":N,"finished":1})
 	// that log show appends; such lines are not records.
 	Finished *int `json:"finished"`
 }
 
-// Classification patterns. Matched case-insensitively against eventMessage.
-// Status per pattern is documented in README ("Phase 0 Ergebnisse"):
-// patterns proven on this system vs. documented-classic patterns still
-// awaiting a real fixture from the corpus capture.
+// Classification. Verified on this system 2026-10-23 (macOS, local APFS
+// destination, complete run captured):
+//
+//	start:    category BackupDispatching, "Backup requested to next
+//	          destination in rotation. ..."
+//	success:  category BackupDispatching, "Backup succeeded\nElapsed
+//	          time: About N minutes"
+//	noise:    "fs_snapshot_list failed" fires during healthy runs
+//	          (and in idle maintenance) — not a failure signal
+//	noise:    "Starting backup pass N" (FileProtection) marks inner
+//	          passes of one running backup, not session starts
+//
+// Classic patterns documented for older macOS releases are kept and
+// marked unverified here; their status is tracked in the README.
 var (
 	startPatterns = []*regexp.Regexp{
-		regexp.MustCompile(`(?i)starting (automatic|manual) backup`),
-		regexp.MustCompile(`(?i)starting backup`),
+		regexp.MustCompile(`(?i)starting (automatic|manual) backup`), // classic, unverified here
 	}
 	successPatterns = []*regexp.Regexp{
-		regexp.MustCompile(`(?i)completed backup`),
-		regexp.MustCompile(`(?i)backup completed`),
-		regexp.MustCompile(`(?i)backup finished`),
+		regexp.MustCompile(`(?i)backup succeeded`), // verified on this system
+		regexp.MustCompile(`(?i)completed backup`), // classic, unverified here
+		regexp.MustCompile(`(?i)backup completed`), // classic, unverified here
+		regexp.MustCompile(`(?i)backup finished`),  // classic, unverified here
 	}
 	failedPatterns = []*regexp.Regexp{
-		regexp.MustCompile(`(?i)backup failed`),
-		regexp.MustCompile(`(?i)failed to complete backup`),
-		regexp.MustCompile(`(?i)backup aborted`),
-		regexp.MustCompile(`(?i)fs_snapshot_list failed`), // observed on this system
+		regexp.MustCompile(`(?i)backup failed`),             // expected shape, unverified here
+		regexp.MustCompile(`(?i)failed to complete backup`), // classic, unverified here
+		regexp.MustCompile(`(?i)backup aborted`),            // classic, unverified here
 		regexp.MustCompile(`(?i)failed to mount (backup )?destination`),
+	}
+	// noisePatterns fire inside healthy backup runs; they must never be
+	// mistaken for session starts or failures.
+	noisePatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)starting backup pass`),    // verified on this system
+		regexp.MustCompile(`(?i)fs_snapshot_list failed`), // verified on this system
 	}
 )
 
 func classifyMessage(msg string) eventKind {
+	for _, re := range noisePatterns {
+		if re.MatchString(msg) {
+			return kindNone
+		}
+	}
 	for _, re := range startPatterns {
 		if re.MatchString(msg) {
 			return kindStart
@@ -145,10 +167,20 @@ func classifyMessage(msg string) eventKind {
 }
 
 func classify(rec *logRecord) eventKind {
-	if rec.EventType != nil && strings.EqualFold(*rec.EventType, "BackupDispatching") {
-		return kindStart
-	}
+	// BackupDispatching (category, from backupd) carries the verified
+	// start ("Backup requested ...") and completion ("Backup succeeded
+	// ...") signals. Other processes (e.g. tmutil itself) log to this
+	// subsystem too, so match on the message content, not category alone.
 	if rec.EventMessage != nil {
+		lower := strings.ToLower(*rec.EventMessage)
+		if rec.Category != nil && strings.EqualFold(*rec.Category, "BackupDispatching") {
+			if strings.Contains(lower, "backup requested") {
+				return kindStart
+			}
+			if strings.Contains(lower, "backup succeeded") {
+				return kindSuccess
+			}
+		}
 		return classifyMessage(*rec.EventMessage)
 	}
 	return kindNone
@@ -314,7 +346,7 @@ func exitCode(r statusReport, threshold time.Duration, now time.Time) int {
 }
 
 func logArgs() []string {
-	return []string{"show", "--style", "ndjson", "--last", logWindow, "--predicate", logPredicate}
+	return []string{"show", "--style", "ndjson", "--info", "--last", logWindow, "--predicate", logPredicate}
 }
 
 // runLogShow executes the Unified Log query as a subprocess. It performs

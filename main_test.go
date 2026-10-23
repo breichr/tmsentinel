@@ -13,11 +13,23 @@ import (
 )
 
 // [real] anonymized: fs_snapshot_list failure observed in category
-// TMSnapshot on this system.
+// TMSnapshot on this system. Verified as noise: it also fires inside a
+// healthy, successful backup run (2026-10-23) and in idle maintenance.
 const realSnapshotFail = `{"timezoneName":"","messageType":"Error","eventType":"logEvent","source":null,"formatString":"%{public}@","userID":501,"subsystem":"com.apple.TimeMachine","category":"TMSnapshot","threadID":3910225,"processImagePath":"/System/Library/CoreServices/SystemUIServer.app/Contents/MacOS/SystemUIServer","timestamp":"2026-10-19 15:21:43.980924+0200","eventMessage":"fs_snapshot_list failed: Operation not supported"}`
 
 // [real] anonymized: capabilities read failure observed on this system.
 const realCapabilitiesFail = `{"eventType":"logEvent","subsystem":"com.apple.TimeMachine","category":"General","processImagePath":"/System/Library/CoreServices/backupd-helper","timestamp":"2026-10-20 14:03:37.290851+0200","eventMessage":"Failed to read capabilities for '/Volumes/NASBOX', error: Operation not permitted"}`
+
+// [real] anonymized: verified backup start signal from the 2026-10-23
+// run, category BackupDispatching, emitted by backupd.
+const realDispatchStart = `{"eventType":"logEvent","subsystem":"com.apple.TimeMachine","category":"BackupDispatching","processImagePath":"/System/Library/CoreServices/TimeMachine/backupd","timestamp":"2026-10-23 14:33:47.562690+0200","eventMessage":"Backup requested to next destination in rotation. specifiedOptions: TMBackupOptions(rawValue: 1)"}`
+
+// [real] anonymized: verified backup success signal from the same run.
+const realDispatchSuccess = `{"eventType":"logEvent","subsystem":"com.apple.TimeMachine","category":"BackupDispatching","processImagePath":"/System/Library/CoreServices/TimeMachine/backupd","timestamp":"2026-10-23 14:37:01.297873+0200","eventMessage":"Backup succeeded\nElapsed time: About 4 minutes"}`
+
+// [real] anonymized: inner pass markers of a running backup (category
+// FileProtection); must not be treated as session starts.
+const realPassStart = `{"eventType":"logEvent","subsystem":"com.apple.TimeMachine","category":"FileProtection","processImagePath":"/System/Library/CoreServices/TimeMachine/backupd","timestamp":"2026-10-23 14:35:10.124577+0200","eventMessage":"Starting backup pass 1"}`
 
 // [real] ndjson footer line that log show appends after all records.
 const realFooter = `{"count":5570,"finished":1}`
@@ -79,8 +91,9 @@ func TestParseNDJSONRealisticCapture(t *testing.T) {
 		t.Fatalf("events = %d, want 3", len(st.events))
 	}
 	// events are sorted chronologically regardless of input order:
-	// snapshot fail (10-19), capabilities fail (10-20), start (10-21)
-	want := []eventKind{kindFailed, kindNone, kindStart}
+	// snapshot fail (10-19) and capabilities fail (10-20) are verified
+	// noise (kindNone), start (10-21) matches the classic pattern
+	want := []eventKind{kindNone, kindNone, kindStart}
 	for i, k := range want {
 		if st.events[i].kind != k {
 			t.Errorf("event[%d].kind = %v, want %v", i, st.events[i].kind, k)
@@ -143,24 +156,46 @@ func TestClassifyMessages(t *testing.T) {
 		msg  string
 		want eventKind
 	}{
+		// verified on this system (2026-10-23 run)
+		{"Backup succeeded\nElapsed time: About 4 minutes", kindSuccess},
+		{"Starting backup pass 1", kindNone},
+		{"Starting backup pass 2", kindNone},
+		{"fs_snapshot_list failed: Operation not supported", kindNone},
+		{"Failed to read capabilities for '/Volumes/NASBOX', error: Operation not permitted", kindNone},
+		{"com.apple.backupd.sandbox.xpc: connection invalid", kindNone},
+		{"Bonjour resolution not possible for 'smb://user@.../NASBOX'", kindNone},
+		// classic patterns, unverified on this system
 		{"Starting automatic backup on mount: /Volumes/DISK", kindStart},
 		{"Starting manual backup", kindStart},
-		{"starting backup to destination", kindStart},
 		{"Completed backup of Macintosh HD", kindSuccess},
 		{"Backup completed successfully", kindSuccess},
 		{"backup finished in 42 seconds", kindSuccess},
 		{"Backup failed with error: mounted volume error", kindFailed},
-		{"fs_snapshot_list failed: Operation not supported", kindFailed},
 		{"Failed to mount backup destination.", kindFailed},
-		{"Failed to read capabilities for '/Volumes/NASBOX', error: Operation not permitted", kindNone},
-		{"com.apple.backupd.sandbox.xpc: connection invalid", kindNone},
-		{"Bonjour resolution not possible for 'smb://user@.../NASBOX'", kindNone},
 		{"", kindNone},
 	}
 	for _, c := range cases {
 		if got := classifyMessage(c.msg); got != c.want {
 			t.Errorf("classifyMessage(%q) = %v, want %v", c.msg, got, c.want)
 		}
+	}
+}
+
+func TestClassifyDispatchCategory(t *testing.T) {
+	// verified BackupDispatching records (real, anonymized)
+	st := parseNDJSON([]byte(realDispatchStart + "\n" + realDispatchSuccess + "\n" + realPassStart + "\n"))
+	if len(st.events) != 3 {
+		t.Fatalf("events = %d, want 3", len(st.events))
+	}
+	// sorted chronologically: start (14:33), pass marker (14:35), success (14:37)
+	if st.events[0].kind != kindStart {
+		t.Errorf("dispatch start kind = %v, want start", st.events[0].kind)
+	}
+	if st.events[1].kind != kindNone {
+		t.Errorf("pass marker kind = %v, want none", st.events[1].kind)
+	}
+	if st.events[2].kind != kindSuccess {
+		t.Errorf("dispatch success kind = %v, want success", st.events[2].kind)
 	}
 }
 
@@ -254,21 +289,53 @@ func TestDeriveStateStartWithoutCompletion(t *testing.T) {
 
 func TestDeriveStateOrphanFailure(t *testing.T) {
 	now := mustParseTime(t, "2026-10-23 14:00:00+0200")
-	// fs_snapshot_list bursts observed on this system arrive without any
-	// start event: they must not fabricate a backup session
-	ev := eventsFromLines(t, realSnapshotFail, realCapabilitiesFail)
-	rep := deriveState(ev, now)
+	// a failure without any start event must not fabricate a session
+	rep := deriveState(eventsFromLines(t, synFailed), now)
 	if len(rep.sessions) != 0 {
 		t.Fatalf("sessions = %d, want 0 (failures must not invent sessions)", len(rep.sessions))
 	}
 	if rep.orphanFailures != 1 {
-		t.Errorf("orphanFailures = %d, want 1 (capabilities failure is noise)", rep.orphanFailures)
+		t.Errorf("orphanFailures = %d, want 1", rep.orphanFailures)
 	}
 	if !rep.hasFailure {
 		t.Error("hasFailure = false, want true")
 	}
 	if rep.lastState() != "none" {
 		t.Errorf("state = %q, want none", rep.lastState())
+	}
+
+	// verified noise lines (fs_snapshot_list, capabilities) must not
+	// register as failures at all
+	rep = deriveState(eventsFromLines(t, realSnapshotFail, realCapabilitiesFail), now)
+	if rep.hasFailure || rep.orphanFailures != 0 {
+		t.Errorf("noise lines: hasFailure=%v orphanFailures=%d, want false/0", rep.hasFailure, rep.orphanFailures)
+	}
+}
+
+func TestDeriveStateCompleteRun(t *testing.T) {
+	// the verified real lifecycle of the 2026-10-23 run: dispatch start,
+	// noise (snapshot list failures, inner pass markers), success
+	now := mustParseTime(t, "2026-10-23 15:00:00+0200")
+	ev := eventsFromLines(t, realDispatchStart, realSnapshotFail, realPassStart, realDispatchSuccess)
+	rep := deriveState(ev, now)
+	if len(rep.sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1", len(rep.sessions))
+	}
+	s := rep.sessions[0]
+	if s.outcome != "success" {
+		t.Errorf("outcome = %q, want success", s.outcome)
+	}
+	if want := mustParseTime(t, "2026-10-23 14:33:47.562690+0200"); !s.start.Equal(want) {
+		t.Errorf("start = %v, want %v", s.start, want)
+	}
+	if want := mustParseTime(t, "2026-10-23 14:37:01.297873+0200"); !s.end.Equal(want) {
+		t.Errorf("end = %v, want %v", s.end, want)
+	}
+	if !rep.hasSuccess || !rep.lastSuccess.Equal(s.end) {
+		t.Errorf("lastSuccess = %v, want %v", rep.lastSuccess, s.end)
+	}
+	if code := exitCode(rep, 48*time.Hour, now); code != exitFresh {
+		t.Errorf("exitCode = %d, want 0", code)
 	}
 }
 
@@ -346,17 +413,59 @@ func TestGoldenPhase0Corpus(t *testing.T) {
 	if rep.hasSuccess {
 		t.Error("hasSuccess = true, want false")
 	}
-	if rep.orphanFailures != 62 {
-		t.Errorf("orphanFailures = %d, want 62", rep.orphanFailures)
-	}
-	if !rep.hasFailure {
-		t.Error("hasFailure = false, want true")
+	// the 62 fs_snapshot_list lines in this fixture are verified noise:
+	// they fire in healthy runs and in idle maintenance alike
+	if rep.orphanFailures != 0 || rep.hasFailure {
+		t.Errorf("orphanFailures = %d, hasFailure = %v, want 0/false", rep.orphanFailures, rep.hasFailure)
 	}
 	if rep.lastState() != "none" {
 		t.Errorf("lastState = %q, want none", rep.lastState())
 	}
 	if code := exitCode(rep, 48*time.Hour, now); code != exitStale {
 		t.Errorf("exitCode = %d, want 2", code)
+	}
+}
+
+// TestGoldenCompleteRun runs the full pipeline against the anonymized
+// real export of the 2026-10-23 backup (testdata/phase0-2026-10-23-run.ndjson):
+// exactly one session, start 14:33:47, success 14:37:01 — the Gate 1
+// evidence. Golden values must change only deliberately, and only with
+// a new fixture.
+func TestGoldenCompleteRun(t *testing.T) {
+	raw, err := os.ReadFile("testdata/phase0-2026-10-23-run.ndjson")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	st := parseNDJSON(raw)
+	if st.unparsed != 0 {
+		t.Errorf("unparsed = %d, want 0; %v", st.unparsed, st.unparsedLn)
+	}
+	if st.footer != 1 || st.comments != 5 {
+		t.Errorf("footer = %d, comments = %d, want 1/5", st.footer, st.comments)
+	}
+	if st.parsed != 292 {
+		t.Errorf("parsed = %d, want 292", st.parsed)
+	}
+	now := mustParseTime(t, "2026-10-23 15:00:00+0200")
+	rep := deriveState(st.events, now)
+	if len(rep.sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1", len(rep.sessions))
+	}
+	s := rep.sessions[0]
+	if s.outcome != "success" {
+		t.Errorf("outcome = %q, want success", s.outcome)
+	}
+	if want := mustParseTime(t, "2026-10-23 14:33:47.562690+0200"); !s.start.Equal(want) {
+		t.Errorf("start = %v, want %v", s.start, want)
+	}
+	if want := mustParseTime(t, "2026-10-23 14:37:01.297873+0200"); !s.end.Equal(want) {
+		t.Errorf("end = %v, want %v", s.end, want)
+	}
+	if rep.orphanFailures != 0 {
+		t.Errorf("orphanFailures = %d, want 0", rep.orphanFailures)
+	}
+	if code := exitCode(rep, 48*time.Hour, now); code != exitFresh {
+		t.Errorf("exitCode = %d, want 0", code)
 	}
 }
 
