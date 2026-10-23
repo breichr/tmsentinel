@@ -32,8 +32,9 @@ for arch in arm64 amd64; do
 
     echo "==> zipping darwin/$arch"
     rm -f "$DIST/tmsentinel_v${VERSION}_darwin_${arch}.zip"
-    # zip from inside dist/ so the archive contains only "tmsentinel"
-    ( cd "$DIST" && ditto -c -k --keepParent tmsentinel \
+    # zip from inside dist/ and without --keepParent: keepParent adds the
+    # containing directory name (dist/) to the archive path
+    ( cd "$DIST" && ditto -c -k tmsentinel \
         "tmsentinel_v${VERSION}_darwin_${arch}.zip" )
 done
 
