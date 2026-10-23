@@ -69,7 +69,7 @@ records`) — nothing is silently dropped.
 ### Homebrew (tap)
 
 ```sh
-brew install breichr/tmsentinel
+brew install breichr/tmsentinel/tmsentinel
 ```
 
 (Tap: `github.com/breichr/homebrew-tmsentinel`; the formula source is
