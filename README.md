@@ -1,124 +1,124 @@
 # tmsentinel
 
-Zustandsloses, FDA-freies Time-Machine-Monitoring-CLI in Go. Es beantwortet:
-Läuft mein Time-Machine-Backup wirklich — und wenn nicht, warum nicht?
+A stateless, FDA-free Time Machine monitoring CLI written in Go. It
+answers one question: is my Time Machine backup really running — and
+if not, why not?
 
-Read-only, kein Daemon, keine GUI, keine State-Datei: Der Zustand „letzter
-erfolgreicher Backup" wird bei jedem Lauf neu aus dem Unified Log abgeleitet.
+Read-only, no daemon, no GUI, no state file: the "last successful
+backup" state is derived fresh from the Unified Log on every run.
 
-Status: **Phase 1 — MVP: `check`, `destinations`** (Phase 0 abgeschlossen,
-Gate 1 bestanden — siehe „Phase 0 Ergebnisse").
+Status: **Phase 1 — MVP: `check`, `destinations`** (Phase 0 complete,
+Gate 1 passed — see "Phase 0 results").
 
-## Nutzung
+## Usage
 
 ```sh
 go build -o tmsentinel .
-./tmsentinel check [--json] [--threshold HOURS]   # Frische prüfen, Exit-Code für Scheduler
-./tmsentinel destinations [--json]                # Ziele, Typ, Erreichbarkeit
-./tmsentinel export FILE                           # Rohdaten-Export (Korpus/Fixtures)
+./tmsentinel check [--json] [--threshold HOURS]   # freshness check, exit code for schedulers
+./tmsentinel destinations [--json]                # destinations, kind, reachability
+./tmsentinel export FILE                           # raw-data export (corpus/fixtures)
 ./tmsentinel version
 ```
 
-`check` leitet den Zustand frisch aus dem Unified Log ab (read-only,
-kein Daemon, keine State-Datei) und prüft das Ziel per
-`tmutil destinationinfo` (FDA-frei). Die zugrunde liegende Abfrage:
+`check` derives the state fresh from the Unified Log (read-only, no
+daemon, no state file) and checks the destination via
+`tmutil destinationinfo` (FDA-free). The underlying query:
 
 ```
 /usr/bin/log show --style ndjson --info --last 7d \
   --predicate 'subsystem == "com.apple.TimeMachine"'
 ```
 
-(`--info` ist Pflicht: backupd loggt seine Lifecycle-Signale auf
-Info-Stufe, siehe „Phase 0 Ergebnisse".)
+(`--info` is mandatory: backupd logs its lifecycle signals at Info
+level — see "Phase 0 results".)
 
-### Exit-Codes (Vertrag)
+### Exit codes (contract)
 
-| Code | Bedeutung |
+| Code | Meaning |
 | --- | --- |
-| 0 | Letzter Backup erfolgreich und frisch; laufender Backup gilt als gesund (0 mit Hinweis) |
-| 1 | Interner Fehler (Subprozess, Flags, Schreibfehler) |
-| 2 | Letzter Backup älter als Schwelle — oder kein erfolgreicher Backup im Fenster |
-| 3 | Kein Ziel konfiguriert |
-| 4 | Ziel konfiguriert, aber nicht erreichbar |
-| 5 | Reserviert: laufender Backup, nur für `--json`-Verbraucher (Feld `running: true`); `check` selbst beendet sich mit 0 + Hinweis |
+| 0 | Last backup successful and fresh; a running backup counts as healthy (0 with a hint) |
+| 1 | Internal error (subprocess, flags, write failure) |
+| 2 | Last backup older than the threshold — or no successful backup in the window |
+| 3 | No destination configured |
+| 4 | Destination configured but unreachable |
+| 5 | Reserved: running backup, for `--json` consumers only (field `running: true`); `check` itself exits 0 with a hint |
 
-Codes 0–5 sind stabil. Neue Zustände bekommen neue Codes ab 6, nur mit
-Major-Version.
+Codes 0–5 are stable. New states get new codes >= 6, major version only.
 
-### Flags und JSON
+### Flags and JSON
 
-- `check --threshold` (Stunden, Default 48), `check --json`,
+- `check --threshold` (hours, default 48), `check --json`,
   `destinations --json`
-- `--json`-Schema von `check` (additiv, nie umbenennen): `state`,
-  `last_success_age_h`, `threshold_h`, `destinations[]` (Name, Kind,
-  Mount Point, reachable), `diagnosis{}`, `running`, `config_loaded`
-- Keine Konfigurationsdatei nötig; `config_loaded: false` bis
-  Konfiguration in Phase 2 dazukommt
+- `check --json` schema (additive only, never renamed): `state`,
+  `last_success_age_h`, `threshold_h`, `destinations[]` (name, kind,
+  mount point, reachable), `diagnosis{}`, `running`, `config_loaded`
+- No configuration file required; `config_loaded: false` until
+  configuration arrives in Phase 2
 
-### Export-Format
+### Export format
 
-`tmsentinel export FILE` schreibt Header-Zeilen beginnend mit `#`
-(captured_at, command), danach die unveränderten NDJSON-Datensätze.
-Der Parser überspringt `#`-Zeilen und den `log show`-Footer
-(`{"count":N,"finished":1}`). Ungeparste Zeilen werden mit Rohinhalt
-auf stderr geloggt, gefolgt von einer Zusammenfassung
-(`n parsed / n unparsed records`) — nichts wird still verworfen.
+`tmsentinel export FILE` writes header lines starting with `#`
+(captured_at, command), followed by the unchanged NDJSON records.
+The parser skips `#` lines and the `log show` footer
+(`{"count":N,"finished":1}`). Unparsed lines are logged to stderr with
+their raw content, followed by a summary (`n parsed / n unparsed
+records`) — nothing is silently dropped.
 
 ## Installation
 
-### Homebrew (Tap)
+### Homebrew (tap)
 
 ```sh
 brew install breichr/tmsentinel
 ```
 
-(Tap: `github.com/breichr/homebrew-tmsentinel`; Formel-Quelle liegt als
-Template in `contrib/homebrew/`.)
+(Tap: `github.com/breichr/homebrew-tmsentinel`; the formula source is
+kept as a template in `contrib/homebrew/`.)
 
-### Direkt-Download
+### Direct download
 
-Release-Archiv für `darwin-arm64` bzw. `darwin-amd64` von der
-[GitHub-Releases-Seite](https://github.com/breichr/tmsentinel/releases)
-entpacken, Binary nach `~/.local/bin` (o. ä.) legen und ausführbar machen.
+Unpack the release archive for `darwin-arm64` or `darwin-amd64` from the
+[GitHub releases page](https://github.com/breichr/tmsentinel/releases),
+put the binary into `~/.local/bin` (or similar), make it executable.
 
-### Aus dem Source
+### From source
 
 ```sh
 go build -o ~/.local/bin/tmsentinel .
 ```
 
-Nur Standardbibliothek, keine externen Abhängigkeiten; nur macOS
-(`statfs`-Erreichbarkeit und `log`/`tmutil` sind darwin-spezifisch).
+Standard library only, no external dependencies; macOS only (the
+`statfs` reachability check and `log`/`tmutil` are darwin-specific).
 
-## Nutzungsbeispiele
+## Examples
 
 ```sh
-# Für launchd/cron/healthchecks.io: nur der Exit-Code entscheidet
+# For launchd/cron/healthchecks.io: only the exit code matters
 tmsentinel check
 
-# Warum ist nichts frisch? Ziele ansehen
+# Nothing fresh? Inspect the destinations
 tmsentinel destinations
 
-# Eigene Schwelle
+# Your own threshold
 tmsentinel check --threshold 24
 
-# Rohdaten für Fehlerberichte und Test-Fixtures
+# Raw data for bug reports and test fixtures
 tmsentinel export report.ndjson
 ```
 
-## Phase 0 Ergebnisse
+## Phase 0 results
 
-Verifiziert am 2026-10-23 auf dem Ziel-Mac (macOS, arm64), ohne Full Disk
-Access. Wichtig für die Interpretation: Auf diesem System ist das
-Backup-Ziel seit Beginn des verfügbaren Logfensters **nicht erreichbar**
-(laut `destinationinfo` ein lokales Ziel „TimeMachine", Volume aktuell
-nicht gemountet; zusätzlich pingt der TimeMachine-Menüprozess ein
-SMB-Ziel `NASBOX`, das per Bonjour nicht auflösbar ist). Im 7-Tage-Fenster
-**fand kein einziger Backuplauf statt**.
+Verified 2026-10-23 on the target Mac (macOS, arm64), without Full Disk
+Access. Important for interpretation: at the start of the available
+log window the backup destination was **unreachable** on this system
+(`destinationinfo` showed a local destination "TimeMachine", volume
+not mounted; additionally the Time Machine menu process probed an SMB
+destination `NASBOX` that could not be resolved via Bonjour). In the
+7-day window **not a single backup ran**.
 
-### tmutil-Verifikation ohne Full Disk Access
+### tmutil verification without Full Disk Access
 
-**`tmutil destinationinfo` — funktioniert ohne FDA (exit 0):**
+**`tmutil destinationinfo` — works without FDA (exit 0):**
 
 ```
 ====================================================
@@ -127,7 +127,7 @@ Kind          : Local
 ID            : 8F11C3F6-D15E-42D4-91B2-DD75A321E475
 ```
 
-**`tmutil status` — funktioniert ohne FDA (exit 0):**
+**`tmutil status` — works without FDA (exit 0):**
 
 ```
 Backup session status:
@@ -138,7 +138,7 @@ Backup session status:
 }
 ```
 
-**`tmutil latestbackup` — FDA-Bindung bestätigt (mit gemountetem Ziel):**
+**`tmutil latestbackup` — FDA binding confirmed (destination mounted):**
 
 ```
 tmutil: latestbackup requires Full Disk Access privileges.
@@ -147,20 +147,21 @@ tab of the Security and Privacy preference pane, and add Terminal
 to the list of applications which are allowed Full Disk Access.
 ```
 
-(exit 80). Beim ersten Verifikationslauf (Ziel nicht gemountet) schlug
-der Befehl erwartungsgemäß **nicht** am FDA fehl, sondern vorher am
-Mounten des Ziels (`Code=18 "Failed to mount destination."`, bemerkenswerterweise
-exit 0) — die FDA-geschützte Operation wurde nie erreicht. Mit gemountetem
-Ziel tritt der FDA-Fehler exakt wie erwartet ein: **die FDA-Bindung ist
-damit belegt.** Auch ein schlichtes `ls /Volumes/TimeMachine/` scheitert
-ohne FDA mit „Operation not permitted" — das Ziel selbst bleibt FDA-geschützt,
-der Unified Log nicht.
+(exit 80). In the first verification run (destination not mounted) the
+command did **not** fail on FDA as expected, but earlier on mounting
+the destination (`Code=18 "Failed to mount destination."`,
+notably with exit 0) — the FDA-protected operation was never reached.
+With the destination mounted, the FDA error occurs exactly as
+expected: **the FDA binding is proven.** Even a plain
+`ls /Volumes/TimeMachine/` fails without FDA with "Operation not
+permitted" — the destination itself stays FDA-protected, the Unified
+Log does not.
 
-### Prototyp-Lauf gegen die realen Daten (7 Tage)
+### Prototype runs against real data (7 days)
 
-Zwei Läufe, zwei Systemzustände:
+Two runs, two system states:
 
-**Lauf 1 — Ziel nicht erreichbar (14:29 Uhr):**
+**Run 1 — destination unreachable (14:29):**
 
 ```
 tmsentinel: 5572 parsed / 0 unparsed records (1 footer lines)
@@ -172,11 +173,11 @@ Time Machine status (unified log, last 7d)
 result: no successful backup in window (exit 2)
 ```
 
-Gegenprobe: `tmutil status` meldete `Running = 0`, das Ziel-Volume war
-nicht gemountet, das NAS per Bonjour nicht erreichbar — keine Quelle
-zeigte einen Backup. Konsistent.
+Cross-check: `tmutil status` reported `Running = 0`, the destination
+volume was not mounted, the NAS was not resolvable via Bonjour — no
+source showed a backup. Consistent.
 
-**Lauf 2 — nach anstecken der Backup-SSD, ein vollständiger Lauf (15:0x Uhr):**
+**Run 2 — backup SSD connected, one complete run (15:0x):**
 
 ```
 tmsentinel: 13038 parsed / 0 unparsed records (1 footer lines)
@@ -188,122 +189,125 @@ Time Machine status (unified log, last 7d)
 result: fresh (exit 0)
 ```
 
-Gegenprobe Realität: Time Machine startete beim Anstecken automatisch
-(`tmutil status`: `Running = 1` ab 14:33:49, Phase PreparingSourceVolumes)
-und meldete danach `Running = 0`. Der Unified Log zeigt den vollständigen
-Lauf: Dispatch 14:33:47, „Backup succeeded — Elapsed time: About 4 minutes"
-14:37:01 — gemeldetes Alter (0,3 h) und Zeitstempel passen zur Realität.
-Der vorherige Backup auf dem Ziel datierte vom 14.10. (Referenz-Mount
-`2026-10-14-170330.backup`), das Fenster dazwischen war backupfrei, wie
-Lauf 1 meldete.
+Cross-check against reality: Time Machine started automatically when
+the SSD was connected (`tmutil status`: `Running = 1` from 14:33:49,
+phase PreparingSourceVolumes) and reported `Running = 0` afterwards.
+The Unified Log shows the complete run: dispatch 14:33:47, "Backup
+succeeded — Elapsed time: About 4 minutes" at 14:37:01 — the reported
+age (0.3 h) and timestamp match reality. The previous backup on the
+destination dated from Oct 14 (reference mount
+`2026-10-14-170330.backup`); the window in between was backup-free,
+exactly as run 1 reported.
 
-### Wichtiger technischer Befund: Info-Stufe ist Pflicht
+### Key technical finding: the Info level is mandatory
 
-Der erste Prototyp lief ohne `--info` und sah **kein einziges**
-Lifecycle-Ereignis. Ursache: `backupd` loggt sämtliche Lebenszyklus-Signale
-(`BackupDispatching`, `BackupDestination`, `TMSession`, …) auf **Info**-Stufe,
-die `log show` standardmäßig nicht zurückgibt. Die finale Abfrage lautet
-daher:
+The first prototype ran without `--info` and saw **not a single**
+lifecycle event. Cause: `backupd` logs all lifecycle signals
+(`BackupDispatching`, `BackupDestination`, `TMSession`, …) at **Info**
+level, which `log show` does not return by default. The final query
+therefore is:
 
 ```
 /usr/bin/log show --style ndjson --info --last 7d \
   --predicate 'subsystem == "com.apple.TimeMachine"'
 ```
 
-Zweiter Befund: `fs_snapshot_list failed: Operation not supported` ist
-**kein** Fehlersignal — es feuert während eines gesunden, erfolgreichen
-Backups (3× bei 14:33:51, Abschluss success) ebenso wie in der idle-Wartung
-(62× über die backupfreie Woche). Der Klassifikator behandelt es
-entsprechend als Rauschen; ebenso `Starting backup pass N` (innere
-Durchgänge eines laufenden Backups, Kategorie FileProtection).
+Second finding: `fs_snapshot_list failed: Operation not supported` is
+**not** a failure signal — it fires during a healthy, successful backup
+(3× at 14:33:51, success completion) as well as during idle maintenance
+(62× over the backup-free week). The classifier treats it as noise
+accordingly; likewise `Starting backup pass N` (inner passes of a
+running backup, category FileProtection).
 
-Nebenbefund: Der Unified-Log-Speicher dieses Systems reicht nur bis
-2026-10-19 13:24 zurück (eine 30-Tage-Abfrage liefert praktisch dieselben
-Zeilen wie die 7-Tage-Abfrage). Für die Korpus-Aufnahme heißt das:
-Aufnahmen sind kurzlebig, `--export` regelmäßig ausführen.
+Side finding: the Unified Log store of this system reaches back only
+to 2026-10-19 13:24 (a 30-day query returns practically the same lines
+as the 7-day query). For corpus capture this means: captures are
+short-lived, run `export` regularly.
 
-## Gate-1-Bericht
+## Gate 1 report
 
-**Gate-1-Frage: Liefert der Unified Log zuverlässig Start und Abschluss
-jedes Backups ohne FDA?**
+**Gate 1 question: does the Unified Log reliably deliver the start and
+completion of every backup without FDA?**
 
-Antwort: **Ja — belegt an einem realen, vollständigen Backuplauf am
-2026-10-23 auf diesem Mac, vollständig ohne FDA.** Start und Abschluss
-erscheinen beide in der Kategorie `BackupDispatching` des Subsystems
-`com.apple.TimeMachine` (Stufe Info) mit klaren, maschinenlesbaren
-Meldungen.
+Answer: **Yes — proven on a real, complete backup run on 2026-10-23 on
+this Mac, entirely without FDA.** Both start and completion appear in
+category `BackupDispatching` of subsystem `com.apple.TimeMachine`
+(Info level) with clear, machine-readable messages.
 
-Je Backup im 7-Tage-Fenster:
+Per backup in the 7-day window:
 
-| Backup | Start-Ereignis | Abschluss-Ereignis |
+| Backup | Start event | Completion event |
 | --- | --- | --- |
-| 2026-10-23, 14:33:47 → 14:37:01 (lokal, APFS-SSD) | ja — `BackupDispatching`: „Backup requested to next destination in rotation" | ja — `BackupDispatching`: „Backup succeeded — Elapsed time: About 4 minutes" |
+| 2026-10-23, 14:33:47 → 14:37:01 (local, APFS SSD) | yes — `BackupDispatching`: "Backup requested to next destination in rotation" | yes — `BackupDispatching`: "Backup succeeded — Elapsed time: About 4 minutes" |
 
-Vorherige Backups (zuletzt 14.10.) liegen außerhalb des Logfensters
-(Speicher retenziert nur ~4 Tage) und sind daher nicht prüfbar — keine
-Aussage über sie, weder positiv noch negativ.
+Earlier backups (most recent Oct 14) lie outside the log window (the
+store retains only ~4 days) and are therefore not verifiable — no claim
+about them, positive or negative.
 
-Belegt außerdem:
+Also proven:
 
-- `log show --style ndjson --info` auf Subsystem `com.apple.TimeMachine`
-  funktioniert **ohne FDA** aus der Kommandozeile; im 7-Tage-Fenster
-  13.038 Datensätze lesbar, alle Felder öffentlich (kein `<private>`).
-- Das **Fehlen** von Backups ist ebenso beobachtbar: Lauf 1 meldete
-  korrekt „kein Backup im Fenster", während das Ziel nicht erreichbar war
-  — der Anwendungsfall des Werkzeugs, FDA-frei.
-- Die FDA-Grenze liegt exakt dort, wo das Projekt sie vermutet hat:
-  `tmutil latestbackup` (exit 80) und selbst `ls` auf dem Ziel scheitern
-  ohne FDA; der Unified Log nicht.
+- `log show --style ndjson --info` on subsystem
+  `com.apple.TimeMachine` works **without FDA** from the command line;
+  13,038 records readable in the 7-day window, all fields public (no
+  `<private>`).
+- The **absence** of backups is equally observable: run 1 correctly
+  reported "no backup in window" while the destination was unreachable
+  — the tool's use case, FDA-free.
+- The FDA boundary lies exactly where the project expected it:
+  `tmutil latestbackup` (exit 80) and even `ls` on the destination fail
+  without FDA; the Unified Log does not.
 
-Offene Fragen (dokumentiert, nicht spekulativ im Code gelöst):
+Open questions (documented, not speculatively solved in code):
 
-1. Auf diesem Mac ist **derzeit kein Time-Machine-Netzwerkziel**
-   konfiguriert (lokal, APFS-SSD). Die SMB-Variante von `BackupDispatching`
-   ist hier daher **nicht anwendbar** — offene Frage für später oder
-   Fremdsysteme, sobald ein Netzwerkziel existiert.
-2. Wie sieht das **Fehlschlag**-Abschluss-Ereignis dieser macOS-Version
-   aus (erwartet: Kategorie `BackupDispatching`, Meldung mit „failed")?
-   Klassifikation aktuell nur mit klassischen Mustern abgedeckt, auf
-   diesem System unverifiziert.
-3. Ein realer **hängender** Backup (Start ohne Abschluss) lag im Fenster
-   nicht vor; die Zustandsmaschine behandelt ihn (hung nach 6 h Gnadenfrist),
-   aber ohne Fixture bleibt er ungetestet gegen Realität.
+1. There is currently **no network Time Machine destination** on this
+   Mac (local, APFS SSD). The SMB variant of `BackupDispatching` is
+   therefore **not applicable here** — an open question for later or
+   for other systems, once a network destination exists.
+2. What does the **failure** completion event of this macOS version
+   look like (expected: category `BackupDispatching`, message with
+   "failed")? Classification currently only covers classic patterns,
+   unverified on this system.
+3. No real **hung** backup (start without completion) occurred in the
+   window; the state machine handles it (hung after a 6 h grace
+   period), but without a fixture it remains untested against reality.
 
-Gate 1: **bestanden** (lokal bewiesen; SMB-Variante mangels Netzwerkziel
-auf diesem System nicht prüfbar, als offene Randbedingung dokumentiert).
+Gate 1: **passed** (proven locally; the SMB variant is not verifiable
+on this system for lack of a network destination, documented as an
+open edge condition).
 
-### Musterkatalog des Prototyps mit Verifizierungsstatus
+### Prototype pattern catalog with verification status
 
-| Muster | Klassifikation | Status |
+| Pattern | Classification | Status |
 | --- | --- | --- |
-| Kategorie `BackupDispatching` + „Backup requested to next destination in rotation" | start | **belegt** (realer Lauf 2026-10-23) |
-| Kategorie `BackupDispatching` + „Backup succeeded" | success | **belegt** (realer Lauf 2026-10-23) |
-| `Starting backup pass N` (FileProtection) | none (innerer Durchgang) | **belegt** — bewusst kein Sitzungs-Start |
-| `fs_snapshot_list failed` | none (Rauschen) | **belegt** — feuert auch in gesunden Läufen |
-| `Failed to read capabilities`, `Bonjour resolution not possible`, XPC-Rauschen | none (Rauschen) | **belegt** |
-| `Starting (automatic\|manual) backup` | start | klassisch dokumentiert, auf diesem System **unverifiziert** |
-| `Completed backup`, `Backup completed`, `Backup finished` | success | klassisch dokumentiert, auf diesem System **unverifiziert** |
-| `Backup failed`, `failed to complete backup`, `Backup aborted`, `Failed to mount (backup )?destination` | failed | klassisch dokumentiert, auf diesem System **unverifiziert** |
+| Category `BackupDispatching` + "Backup requested to next destination in rotation" | start | **proven** (real run 2026-10-23) |
+| Category `BackupDispatching` + "Backup succeeded" | success | **proven** (real run 2026-10-23) |
+| `Starting backup pass N` (FileProtection) | none (inner pass) | **proven** — deliberately not a session start |
+| `fs_snapshot_list failed` | none (noise) | **proven** — also fires in healthy runs |
+| `Failed to read capabilities`, `Bonjour resolution not possible`, XPC noise | none (noise) | **proven** |
+| `Starting (automatic\|manual) backup` | start | classically documented, **unverified** on this system |
+| `Completed backup`, `Backup completed`, `Backup finished` | success | classically documented, **unverified** on this system |
+| `Backup failed`, `failed to complete backup`, `Backup aborted`, `Failed to mount (backup )?destination` | failed | classically documented, **unverified** on this system |
 
-### Korpus-Start
+### Corpus start
 
-Zwei anonymisierte Real-Exporte als Golden-File-Tests:
+Two anonymized real exports as golden-file tests:
 
-- `testdata/phase0-2026-10-23-anonymized.ndjson` — backupfreies Fenster
-  (Default-Stufe, 5570 Datensätze): Zustand „kein Backup", Exit 2.
-- `testdata/phase0-2026-10-23-run.ndjson` — vollständiger realer Lauf
-  (Info-Stufe, 292 Datensätze): genau eine Sitzung, Start 14:33:47,
-  Erfolg 14:37:01, Exit 0 — die Gate-1-Evidenz.
+- `testdata/phase0-2026-10-23-anonymized.ndjson` — backup-free window
+  (default level, 5,570 records): state "no backup", exit 2.
+- `testdata/phase0-2026-10-23-run.ndjson` — complete real run (Info
+  level, 292 records): exactly one session, start 14:33:47, success
+  14:37:01, exit 0 — the Gate 1 evidence.
 
-Weiterführung: regelmäßig `--export` ausführen, bis der Korpus auch einen
-SMB-Lauf (Erfolg und Abbruch) und einen hängenden Backup enthält (Roadmap).
+Continuation: run `export` regularly until the corpus also contains an
+SMB run (success and abort) and a hung backup (roadmap).
 
 ## Definition of done (Phase 0)
 
-- `go build ./...`, `go vet ./...`, `go test ./...` bestehen — Unit-Tests
-  für Parser, Klassifikation, Zustandsmaschine, Schwellenlogik und Export
-  mit Beispiel-NDJSON-Zeilen, inkl. Zeilen mit fehlenden Feldern
-  (kein Timestamp, fehlende Felder, Müllzeilen, Footer, Kommentarzeilen).
-- Read-only: das Programm startet/stoppt keine Backups und verändert nichts
-  am System.
-- Keine Phase-1-Arbeit (`check`/`destinations`-Subcommands).
+- `go build ./...`, `go vet ./...`, `go test ./...` pass — unit tests
+  for parser, classification, state machine, threshold logic, and
+  export with sample NDJSON lines, including lines with missing fields
+  (no timestamp, missing fields, garbage lines, footer, comment lines).
+- Read-only: the program never starts or stops backups and changes
+  nothing on the system.
+- No Phase 1 work (`check`/`destinations` subcommands) — that phase
+  has since been completed.
