@@ -77,9 +77,19 @@ kept as a template in `contrib/homebrew/`.)
 
 ### Direct download
 
-Unpack the release archive for `darwin-arm64` or `darwin-amd64` from the
-[GitHub releases page](https://github.com/breichr/tmsentinel/releases),
-put the binary into `~/.local/bin` (or similar), make it executable.
+Unpack the release archive for your Mac — [v0.1.0](https://github.com/breichr/tmsentinel/releases/tag/v0.1.0):
+
+- [tmsentinel_v0.1.0_darwin_arm64.zip](https://github.com/breichr/tmsentinel/releases/download/v0.1.0/tmsentinel_v0.1.0_darwin_arm64.zip) (Apple Silicon)
+- [tmsentinel_v0.1.0_darwin_amd64.zip](https://github.com/breichr/tmsentinel/releases/download/v0.1.0/tmsentinel_v0.1.0_darwin_amd64.zip) (Intel)
+
+Unzip and put the binary on your PATH. Binaries are Developer ID signed
+and notarized with Apple. Verify with `shasum -a 256 -c checksums.txt`
+using the [checksums](https://github.com/breichr/tmsentinel/releases/download/v0.1.0/checksums.txt).
+
+Releases are cut locally, never in CI: `scripts/release.sh` builds,
+signs, and packages; `scripts/notarize.sh` submits to Apple's notary
+service. The Developer ID certificate and the notary keychain profile
+stay on the machine and never enter GitHub secrets.
 
 ### From source
 

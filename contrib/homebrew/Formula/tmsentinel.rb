@@ -1,8 +1,8 @@
 # Homebrew formula template for the tap repository
 # (github.com/breichr/homebrew-tmsentinel, Formula/tmsentinel.rb).
 #
-# The sha256 placeholders are filled in from the release artifacts
-# after the release workflow has built them (see README: Distribution).
+# Release binaries are Developer ID signed and notarized; see
+# scripts/release.sh and scripts/notarize.sh in the main repository.
 class Tmsentinel < Formula
   desc "Stateless, FDA-free Time Machine monitoring CLI"
   homepage "https://github.com/breichr/tmsentinel"
@@ -12,12 +12,12 @@ class Tmsentinel < Formula
   depends_on :macos
 
   on_arm do
-    url "https://github.com/breichr/tmsentinel/releases/download/v0.1.0/tmsentinel-v0.1.0-darwin-arm64.tar.gz"
-    sha256 "ARM64_SHA256_PLACEHOLDER"
+    url "https://github.com/breichr/tmsentinel/releases/download/v0.1.0/tmsentinel_v0.1.0_darwin_arm64.zip"
+    sha256 "d596f3b3651ea9cc00a3280b7dffc5ea92a9e8d389a042411e3f1526e1df1a12"
   end
   on_intel do
-    url "https://github.com/breichr/tmsentinel/releases/download/v0.1.0/tmsentinel-v0.1.0-darwin-amd64.tar.gz"
-    sha256 "AMD64_SHA256_PLACEHOLDER"
+    url "https://github.com/breichr/tmsentinel/releases/download/v0.1.0/tmsentinel_v0.1.0_darwin_amd64.zip"
+    sha256 "905055238c395a6c0462adacbd4265b529f5df4628ea3d34ba93d642704546c5"
   end
 
   def install
