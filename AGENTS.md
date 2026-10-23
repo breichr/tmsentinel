@@ -39,13 +39,32 @@ runs `log` or `tmutil`.
 ## Testing
 
 - Fixtures are anonymized real `log show` exports in testdata/,
-  produced by `--export` (later `tmsentinel export`). Golden-file
+  produced by `tmsentinel export`. Golden-file
   tests. Synthetic fixtures must be marked `synthetic` in a header
   comment.
 - No test calls `log`, `tmutil`, or the network. Recorded outputs only.
 - `go build ./...`, `go vet ./...`, `go test ./...` must pass.
 - CI must run without macOS privileges; live smoke tests carry
   //go:build darwin.
+
+## Releases
+
+- Releases are cut locally, never in CI: the Developer ID certificate
+  and the notary keychain profile (`caskvet-notary`) stay on the
+  machine and never enter GitHub secrets. CI only builds and tests.
+- Process per version: tag `vX.Y.Z` matching `cli.Version` ->
+  `scripts/release.sh` (build darwin/arm64 + amd64, codesign with
+  Developer ID Application, hardened runtime, timestamp; ditto zips;
+  checksums.txt) -> `scripts/notarize.sh` (notarytool, wait for
+  Accepted) -> `gh release create` with the zips and checksums.txt.
+- Archives are zips, not tar.gz: notarytool accepts no tar.gz. Zip
+  without --keepParent so the archive contains only the binary.
+- After each release, update the formula template in
+  contrib/homebrew/ (version, URLs, sha256 from checksums.txt) and
+  copy it by hand into the tap repository breichr/homebrew-tmsentinel.
+- Install docs use the fully qualified path:
+  `brew install breichr/tmsentinel/tmsentinel` (the shorthand does
+  not resolve on current brew).
 
 ## Definition of done
 
