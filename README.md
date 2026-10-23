@@ -6,17 +6,22 @@ Läuft mein Time-Machine-Backup wirklich — und wenn nicht, warum nicht?
 Read-only, kein Daemon, keine GUI, keine State-Datei: Der Zustand „letzter
 erfolgreicher Backup" wird bei jedem Lauf neu aus dem Unified Log abgeleitet.
 
-Status: **Phase 0 — Beweis des FDA-freien Kerns** (Prototyp, siehe
-„Phase 0 Ergebnisse").
+Status: **Phase 1 — MVP: `check`, `destinations`** (Phase 0 abgeschlossen,
+Gate 1 bestanden — siehe „Phase 0 Ergebnisse").
 
-## Nutzung (Phase 0 Prototyp)
+## Nutzung
 
 ```sh
 go build -o tmsentinel .
-./tmsentinel [--threshold HOURS] [--export FILE]
+./tmsentinel check [--json] [--threshold HOURS]   # Frische prüfen, Exit-Code für Scheduler
+./tmsentinel destinations [--json]                # Ziele, Typ, Erreichbarkeit
+./tmsentinel export FILE                           # Rohdaten-Export (Korpus/Fixtures)
+./tmsentinel version
 ```
 
-Der Prototyp führt als Subprozess aus (read-only):
+`check` leitet den Zustand frisch aus dem Unified Log ab (read-only,
+kein Daemon, keine State-Datei) und prüft das Ziel per
+`tmutil destinationinfo` (FDA-frei). Die zugrunde liegende Abfrage:
 
 ```
 /usr/bin/log show --style ndjson --info --last 7d \
@@ -26,32 +31,38 @@ Der Prototyp führt als Subprozess aus (read-only):
 (`--info` ist Pflicht: backupd loggt seine Lifecycle-Signale auf
 Info-Stufe, siehe „Phase 0 Ergebnisse".)
 
-Ausgabe: Zeitstempel und Alter des letzten erfolgreichen Backups, Anzahl
-erkannter Backups im 7-Tage-Fenster, Zustand des letzten Backups
-(success / failed / running / hung — Start ohne Abschluss), Schwelle.
-
-Ungeparste Zeilen werden mit Rohinhalt auf stderr geloggt, gefolgt von einer
-Zusammenfassung (`n parsed / n unparsed records`). Nichts wird still
-verworfen.
-
 ### Exit-Codes (Vertrag)
 
 | Code | Bedeutung |
 | --- | --- |
-| 0 | Letzter Backup erfolgreich und jünger als die Schwelle |
-| 1 | Interner Fehler (Subprozess, Flags, Export-Schreibfehler) |
-| 2 | Letzter Backup älter als die Schwelle — oder kein erfolgreicher Backup im Fenster |
+| 0 | Letzter Backup erfolgreich und frisch; laufender Backup gilt als gesund (0 mit Hinweis) |
+| 1 | Interner Fehler (Subprozess, Flags, Schreibfehler) |
+| 2 | Letzter Backup älter als Schwelle — oder kein erfolgreicher Backup im Fenster |
+| 3 | Kein Ziel konfiguriert |
+| 4 | Ziel konfiguriert, aber nicht erreichbar |
+| 5 | Reserviert: laufender Backup, nur für `--json`-Verbraucher (Feld `running: true`); `check` selbst beendet sich mit 0 + Hinweis |
 
-### Flags
+Codes 0–5 sind stabil. Neue Zustände bekommen neue Codes ab 6, nur mit
+Major-Version.
 
-| Flag | Default | Bedeutung |
-| --- | --- | --- |
-| `--threshold` | 48 | Frische-Schwelle in Stunden |
-| `--export` | – | Schreibt die rohe `log show`-Ausgabe mit Metadaten-Header in eine Datei (Korpus-Start; wird später `tmsentinel export`) |
+### Flags und JSON
 
-Export-Format: Header-Zeilen beginnend mit `#` (captured_at, command),
-danach die unveränderten NDJSON-Datensätze. Der Parser überspringt
-`#`-Zeilen und den `log show`-Footer (`{"count":N,"finished":1}`).
+- `check --threshold` (Stunden, Default 48), `check --json`,
+  `destinations --json`
+- `--json`-Schema von `check` (additiv, nie umbenennen): `state`,
+  `last_success_age_h`, `threshold_h`, `destinations[]` (Name, Kind,
+  Mount Point, reachable), `diagnosis{}`, `running`, `config_loaded`
+- Keine Konfigurationsdatei nötig; `config_loaded: false` bis
+  Konfiguration in Phase 2 dazukommt
+
+### Export-Format
+
+`tmsentinel export FILE` schreibt Header-Zeilen beginnend mit `#`
+(captured_at, command), danach die unveränderten NDJSON-Datensätze.
+Der Parser überspringt `#`-Zeilen und den `log show`-Footer
+(`{"count":N,"finished":1}`). Ungeparste Zeilen werden mit Rohinhalt
+auf stderr geloggt, gefolgt von einer Zusammenfassung
+(`n parsed / n unparsed records`) — nichts wird still verworfen.
 
 ## Phase 0 Ergebnisse
 
@@ -204,9 +215,10 @@ Belegt außerdem:
 
 Offene Fragen (dokumentiert, nicht spekulativ im Code gelöst):
 
-1. Verhält sich `BackupDispatching` auf **SMB-Netzwerkzielen** identisch?
-   Korpus-Aufnahme läuft; erst ein realer SMB-Lauf (Erfolg und Abbruch)
-   beantwortet das.
+1. Auf diesem Mac ist **derzeit kein Time-Machine-Netzwerkziel**
+   konfiguriert (lokal, APFS-SSD). Die SMB-Variante von `BackupDispatching`
+   ist hier daher **nicht anwendbar** — offene Frage für später oder
+   Fremdsysteme, sobald ein Netzwerkziel existiert.
 2. Wie sieht das **Fehlschlag**-Abschluss-Ereignis dieser macOS-Version
    aus (erwartet: Kategorie `BackupDispatching`, Meldung mit „failed")?
    Klassifikation aktuell nur mit klassischen Mustern abgedeckt, auf
@@ -215,8 +227,8 @@ Offene Fragen (dokumentiert, nicht spekulativ im Code gelöst):
    nicht vor; die Zustandsmaschine behandelt ihn (hung nach 6 h Gnadenfrist),
    aber ohne Fixture bleibt er ungetestet gegen Realität.
 
-Gate 1: **bestanden** (lokal bewiesen; SMB-Variante als offene Randbedingung
-für die Korpus-Phase mitgenommen).
+Gate 1: **bestanden** (lokal bewiesen; SMB-Variante mangels Netzwerkziel
+auf diesem System nicht prüfbar, als offene Randbedingung dokumentiert).
 
 ### Musterkatalog des Prototyps mit Verifizierungsstatus
 

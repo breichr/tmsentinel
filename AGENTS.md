@@ -19,21 +19,22 @@ backup really running — and if not, why not? Read-only, no daemon, no GUI.
 
 ## Packages
 
-Phase 0 is a single-file prototype in the module root (package main).
-The target package layout for Phase 1+:
-
-- event: Unified-Log parser + event model. Only package that shells
-  out to `log`.
-- state: backup state machine (idle -> running -> success/failed), pure.
+- event: Unified-Log parser + event model. Shells out to `log`
+  (UnifiedLog source) and writes the export corpus format.
+- state: backup state machine (idle -> running -> success/failed/hung),
+  pure, sorts its input.
 - freshness: age logic, thresholds, injected clock, pure.
-- reason: failure fingerprints -> plain-text diagnosis, pure.
+- destinations: tmutil destinationinfo subprocess + parser + mount-point
+  reachability (statfs). Second subprocess package.
+- cli: subcommand dispatch (check, destinations, export, version),
+  output, exit-code contract.
+- reason: failure fingerprints -> plain-text diagnosis, pure (Phase 3).
 - notify: healthchecks ping, macOS notification via osascript, exit
-  code adapter. Only package besides event that runs subprocesses.
-- cli: subcommand dispatch, output, config.
+  code adapter (Phase 2).
 
-Everything else does no I/O. In the prototype the same separation is
-kept functionally: parsing, state derivation, and freshness logic are
-pure functions; only runLogShow performs process I/O.
+Only event and destinations run subprocesses. Everything else does no
+I/O; subprocess sources are injected as interfaces, so no test ever
+runs `log` or `tmutil`.
 
 ## Testing
 
@@ -52,5 +53,5 @@ pure functions; only runLogShow performs process I/O.
   missing-field fallback.
 - `tmsentinel check` works with zero config after every change.
 - README updated for user-visible changes.
-- Current phase: 0 (proof of the FDA-free core). Do not work ahead of
+- Current phase: 1 (MVP: check, destinations). Do not work ahead of
   the active gate.
