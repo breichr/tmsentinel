@@ -1,0 +1,5 @@
+# working data, never committed
+.scratch/
+.DS_Store
+tmsentinel
+dist/
