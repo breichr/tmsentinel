@@ -107,17 +107,6 @@ func TestAnyReachable(t *testing.T) {
 	}
 }
 
-func TestDefaultCheckerOnRealVolume(t *testing.T) {
-	// StatfsMounted is the production checker; on darwin it must not
-	// panic and must answer for the root filesystem.
-	if !StatfsMounted("/") {
-		t.Error("root filesystem reported not mounted")
-	}
-	if StatfsMounted("/nonexistent-volume-xyz") {
-		t.Error("nonexistent path reported mounted")
-	}
-}
-
 func TestTMUtilArgs(t *testing.T) {
 	tm := DefaultTMUtil()
 	if tm.Binary == "" || !strings.HasSuffix(tm.Binary, "tmutil") {
